@@ -1,26 +1,29 @@
 // app/layout.tsx
-import { ClerkProvider } from '@clerk/nextjs'
-import './global.css' // Make sure your global styles are imported
-import { ReactNode } from 'react';
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { ClerkProvider } from '@clerk/nextjs'; // <--- Import ClerkProvider
+import "./global.css"; // Ensure global styles are imported
 
-// Import your font configuration if you have one
-// import { Inter } from 'next/font/google'
-// const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ["latin"] });
 
-export const metadata = {
-  title: 'Digital Concierge',
-  description: 'Your personal resort assistant',
-}
+export const metadata: Metadata = {
+  title: "Digital Concierge", // Customize as needed
+  description: "Your personalized digital concierge service", // Customize as needed
+};
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <ClerkProvider> {/* <-- Wrap with ClerkProvider --> */}
+    // Wrap the entire HTML structure with ClerkProvider
+    <ClerkProvider>
       <html lang="en">
-        {/* Apply font className if using next/font: <body className={inter.className}> */}
-        <body>
+        <body className={inter.className}>
           {children}
         </body>
       </html>
     </ClerkProvider>
-  )
+  );
 }

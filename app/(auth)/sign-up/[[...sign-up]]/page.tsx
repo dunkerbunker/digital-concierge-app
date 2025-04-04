@@ -1,10 +1,9 @@
 // app/(auth)/sign-up/[[...sign-up]]/page.tsx
-import { SignUp } from '@clerk/nextjs';
-import React from 'react';
+import { SignUp } from "@clerk/nextjs";
 
 export default function SignUpPage() {
   return (
-    <div className="flex justify-center items-center min-h-screen">
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
       <SignUp path="/sign-up" routing="path" signInUrl="/sign-in" />
     </div>
   );

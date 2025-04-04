@@ -1,99 +1,141 @@
 // middleware.ts
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import {
+  clerkMiddleware,
+  createRouteMatcher,
+  auth, // Import auth to get session claims
+} from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)', '/api/(.*)']);
+// --- Configuration: Define Roles (Must match values in Clerk publicMetadata.role) ---
+const ROLES = {
+  ADMIN: 'admin',
+  BUTLER: 'butler',
+  GUEST: 'guest', // Assuming 'guest' is the default or explicitly set for standard users
+};
+
+// --- Route Matchers ---
+
+// Routes accessible to everyone, including logged-out users
+const isPublicRoute = createRouteMatcher([
+  '/',                      // Landing/Marketing page (adjust if it requires login)
+  '/sign-in(.*)',           // Clerk sign-in flow routes
+  '/sign-up(.*)',           // Clerk sign-up flow routes
+  '/api/webhook(.*)',       // Any public webhooks (e.g., Clerk user sync)
+  '/api/example-route',     // Your example public API route
+  // Add other public pages like /about, /contact, /pricing if they exist
+]);
+
+// Routes specifically for authentication (used for redirection logic)
+const isAuthRoute = createRouteMatcher([
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+]);
+
+// Routes requiring Admin role
 const isAdminRoute = createRouteMatcher(['/admin(.*)']);
+
+// Routes requiring Butler role (or Admin)
 const isButlerRoute = createRouteMatcher(['/butler(.*)']);
+
+// Routes requiring Guest role (or Butler/Admin - essentially any logged-in user)
 const isGuestRoute = createRouteMatcher(['/guest(.*)']);
 
-const guestHome = '/guest/home';
-const butlerHome = '/butler/dashboard';
-const adminHome = '/admin/overview';
+export default clerkMiddleware((authData, req) => {
+  const { userId, sessionClaims, redirectToSignIn } = authData;
 
-export default clerkMiddleware(async (auth, req) => {
-  const { userId, sessionClaims, orgRole } = auth();
-  const role = sessionClaims?.metadata?.role || orgRole; // Check if this resolves correctly
-  const { pathname } = req.nextUrl;
+  // --- Get User Role from Clerk Metadata ---
+  // Assumes role is stored like: publicMetadata: { role: 'admin' | 'butler' | 'guest' }
+  // Ensure this key ('role') and the values match your Clerk setup.
+  const userRole = sessionClaims?.publicMetadata?.role as string | undefined;
 
-  // --- Log basic info ---
-  console.log(`Middleware triggered for path: ${pathname}`);
-  console.log(`User ID: ${userId}`);
-  console.log(`User Role (from metadata/org): ${role}`); // Check if role is found!
+  // --- 1. Redirect logged-in users trying to access auth pages ---
+  if (userId && isAuthRoute(req)) {
+    let redirectUrl = '/guest/home'; // Default redirect for guests or unknown roles
 
-  // --- 1. Public Routes ---
+    // Determine dashboard based on role
+    if (userRole === ROLES.ADMIN) {
+      redirectUrl = '/admin/overview';
+    } else if (userRole === ROLES.BUTLER) {
+      redirectUrl = '/butler/dashboard';
+    }
+    // Guests or users without a specific role assigned yet go to '/guest/home'
+
+    console.log(`Redirecting logged-in user from auth route to: ${redirectUrl}`);
+    return NextResponse.redirect(new URL(redirectUrl, req.url));
+  }
+
+  // --- 2. Allow access to public routes ---
   if (isPublicRoute(req)) {
-    // If user is logged in AND trying to access a public auth page like /sign-in, redirect them away
-    if (userId && (pathname.startsWith('/sign-in') || pathname.startsWith('/sign-up'))) {
-      console.log('User is logged in, redirecting away from auth page...');
-      let redirectUrl = '/'; // Default redirect IF role is somehow unknown right after login
-      if (role === 'guest') redirectUrl = guestHome;
-      else if (role === 'butler') redirectUrl = butlerHome;
-      else if (role === 'admin') redirectUrl = adminHome;
-      else console.log('Role unknown when redirecting from auth page, defaulting to /'); // Log if role is missing
+    // console.log(`Allowing access to public route: ${req.nextUrl.pathname}`);
+    return NextResponse.next(); // Does not require authentication
+  }
+
+  // --- 3. Redirect unauthenticated users trying to access protected routes ---
+  if (!userId) {
+    console.log(`Unauthenticated access to protected route: ${req.nextUrl.pathname}. Redirecting to sign-in.`);
+    // Pass the intended URL (returnBackUrl) so Clerk redirects them after login
+    return redirectToSignIn({ returnBackUrl: req.url });
+  }
+
+  // --- 4. Role-Based Access Control for Logged-In Users ---
+  // At this point, we know the user is logged in (userId exists).
+
+  // Admin Route Protection
+  if (isAdminRoute(req)) {
+    if (userRole !== ROLES.ADMIN) {
+      console.warn(`Unauthorized access attempt to admin route by user ${userId} with role ${userRole}. Redirecting.`);
+      // Redirect non-admins trying to access admin pages
+      const redirectUrl = userRole === ROLES.BUTLER ? '/butler/dashboard' : '/guest/home';
       return NextResponse.redirect(new URL(redirectUrl, req.url));
     }
-    console.log('Allowing access to public route.');
-    return NextResponse.next(); // Allow access to public routes for logged-out users
+    // console.log(`Allowing admin access for user ${userId} to: ${req.nextUrl.pathname}`);
+    return NextResponse.next(); // Allow access if user is admin
   }
 
-  // --- 2. Authentication --- (User MUST be logged in here onwards)
-  if (!userId) {
-    console.log('User not logged in, redirecting to sign-in.');
-    const signInUrl = new URL(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL!, req.url);
-    signInUrl.searchParams.set('redirect_url', req.url);
-    return NextResponse.redirect(signInUrl);
+  // Butler Route Protection
+  if (isButlerRoute(req)) {
+    // Allow both Butlers and Admins to access Butler routes
+    if (userRole !== ROLES.BUTLER && userRole !== ROLES.ADMIN) {
+       console.warn(`Unauthorized access attempt to butler route by user ${userId} with role ${userRole}. Redirecting.`);
+       // Redirect non-butlers/non-admins (i.e., guests)
+       return NextResponse.redirect(new URL('/guest/home', req.url));
+    }
+     // console.log(`Allowing butler/admin access for user ${userId} to: ${req.nextUrl.pathname}`);
+    return NextResponse.next(); // Allow access if user is butler or admin
   }
 
-  // --- At this point, user is definitely logged in ---
-  console.log('User is logged in.');
-
-
-  // --- 3. Redirect from Root Path ---
-  if (pathname === '/') {
-    console.log('User hit root path /');
-    if (role === 'guest') {
-       console.log('Redirecting guest to guestHome');
-       return NextResponse.redirect(new URL(guestHome, req.url));
-    }
-    if (role === 'butler') {
-      console.log('Redirecting butler to butlerHome');
-      return NextResponse.redirect(new URL(butlerHome, req.url));
-    }
-    if (role === 'admin') {
-      console.log('Redirecting admin to adminHome');
-      return NextResponse.redirect(new URL(adminHome, req.url));
-    }
-    // Fallback if role is missing or unknown WHEN hitting '/'
-    console.log('Role unknown when hitting /, redirecting to default (guestHome)');
-    return NextResponse.redirect(new URL(guestHome, req.url));
+  // Guest Route Protection
+  if (isGuestRoute(req)) {
+    // Any logged-in user (Guest, Butler, Admin) can access guest routes by default.
+    // If you needed to restrict this *only* to guests, you would add:
+    // if (userRole !== ROLES.GUEST) { /* redirect logic */ }
+    // console.log(`Allowing logged-in user access for user ${userId} to: ${req.nextUrl.pathname}`);
+    return NextResponse.next(); // Allow access to all logged-in users
   }
 
-  // --- 4. Protection for specific role paths --- (Simplified logging)
-  if (isAdminRoute(req) && role !== 'admin') {
-     console.log(`Redirecting non-admin from admin route (${pathname})`);
-     return NextResponse.redirect(new URL(guestHome, req.url));
-   }
-  if (isButlerRoute(req) && role !== 'butler' /* && role !== 'admin' */) {
-     console.log(`Redirecting non-butler from butler route (${pathname})`);
-     return NextResponse.redirect(new URL(guestHome, req.url));
-   }
-  if (isGuestRoute(req) && role !== 'guest' /* && role !== 'admin' && role !== 'butler' */ ) {
-     console.log(`Redirecting non-guest from guest route (${pathname})`);
-     // Decide where non-guests trying to access guest routes should go
-     return NextResponse.redirect(new URL(butlerHome, req.url));
-   }
-
-  // --- Allow Access ---
-  console.log(`Allowing access for user ${userId} with role ${role} to path ${pathname}`);
+  // --- 5. Fallback for any other authenticated routes ---
+  // If a route is not public, not an auth route, and doesn't match admin/butler/guest prefixes,
+  // but the user is logged in, this rule applies.
+  // You might want to be more specific or redirect to a default dashboard.
+  // For now, we allow access if they are logged in and haven't been caught by other rules.
+  // console.log(`Allowing access to other authenticated route for user ${userId}: ${req.nextUrl.pathname}`);
   return NextResponse.next();
+
 });
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - Any paths containing a period (.) likely indicating a file extension
+     */
+    '/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)',
+    // Match the root ('/') route explicitly if it wasn't caught by the pattern above
     '/',
-    '/(admin|butler|guest)(.*)',
-    '/api/(.*)',
+    // Include API routes in the matcher if they need protection/logic applied by the middleware
+    // '/(api|trpc)(.*)', // Uncomment and adjust if API routes need protection
   ],
 };
