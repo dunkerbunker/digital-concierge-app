@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String          @id @default(uuid())
+  email       String          @unique
+  name        String?
+  role        Role
+  bookings    Booking[]
+  itineraries Itinerary[]
+  activityLog ActivityLog[]
+  messagesSent Message[]     @relation("Sender")
+  messagesReceived Message[] @relation("Receiver")
+  aiSuggestions AiSuggestion[]
+  waitlistEntries WaitlistEntry[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum Role {
+  GUEST
+  ADMIN
+  BUTLER
+  RESERVATION_MANAGER
+  FRONT_DESK_AGENT
+}
+
+model Booking {
+  id          String          @id @default(uuid())
+  user        User            @relation(fields: [userId], references: [id])
+  userId      String
+  service     Service         @relation(fields: [serviceId], references: [id])
+  serviceId   String
+  status      BookingStatus
+  histories   BookingHistory[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  WAITLISTED
+}
+
+model BookingHistory {
+  id        String   @id @default(uuid())
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  bookingId String
+  status    BookingStatus
+  changedAt DateTime @default(now())
+  changedBy String?  // Optional admin or system trigger
+}
+
+model Service {
+  id          String              @id @default(uuid())
+  name        String
+  description String?
+  price       Float
+  available   Boolean             @default(true)
+  bookings    Booking[]
+  promotions  Promotion[]         @relation("PromotionServices")
+  translations ServiceTranslation[]
+  waitlistEntries WaitlistEntry[]
+}
+
+model Promotion {
+  id          String     @id @default(uuid())
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  discount    Float
+  services    Service[]  @relation("PromotionServices")
+}
+
+model Itinerary {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  details   String
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  action    String
+  target    String?
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
+model WaitlistEntry {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  service    Service  @relation(fields: [serviceId], references: [id])
+  serviceId  String
+  createdAt  DateTime @default(now())
+  notified   Boolean  @default(false)
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  sender     User     @relation("Sender", fields: [senderId], references: [id])
+  senderId   String
+  receiver   User     @relation("Receiver", fields: [receiverId], references: [id])
+  receiverId String
+  content    String
+  sentAt     DateTime @default(now())
+  read       Boolean  @default(false)
+}
+
+model AiSuggestion {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+  suggestion String
+  accepted   Boolean?
+  createdAt  DateTime @default(now())
+}
+
+model ServiceTranslation {
+  id          String   @id @default(uuid())
+  service     Service  @relation(fields: [serviceId], references: [id])
+  serviceId   String
+  language    String   // e.g., 'en', 'dv'
+  name        String
+  description String?
+}
